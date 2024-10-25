@@ -9,6 +9,9 @@ import base64
 import requests
 import numpy as np
 
+# vworld API 키
+vworld_key = "202159BE-213A-3469-B34A-8C042106E69E"
+
 # Streamlit 앱 설정
 st.title("부산광역시 빈집 분포도")
 st.markdown("엑셀 파일을 업로드하면 건물 정보의 위치와 사진이 지도에 표시됩니다.")
@@ -103,42 +106,53 @@ if uploaded_file is not None:
 
     # 초기 지도 생성
     initial_zoom_level = 11
-    map_center = [df['위도'].mean(), df['경도'].mean()]
-    map = folium.Map(location=map_center, zoom_start=initial_zoom_level, tiles='cartodbpositron')
+    map_center = [filtered_df['위도'].mean(), filtered_df['경도'].mean()]
+    m = folium.Map(location=map_center, zoom_start=initial_zoom_level)
 
-    # Chropleth 지도 생성
+    layer = "white"
+    tileType = "png"
+    tiles = f"https://api.vworld.kr/req/wmts/1.0.0/{vworld_key}/{layer}/{{z}}/{{y}}/{{x}}.{tileType}"
+    attr = "Vworld"
+
+    folium.TileLayer(tiles=tiles, attr=attr, overlay=True, control=True).add_to(m)
+
+    # Choropleth 지도 생성
     if not filtered_df.empty:
         sgg_counts = filtered_df['시군구'].value_counts().reset_index()
         sgg_counts.columns = ['시군구', 'count']
         sgg_counts['sgg'] = sgg_counts['시군구'].map(sgg_mapping)
 
-        # Count를 7단계로 구분
-        count_bins = pd.qcut(sgg_counts['count'], 7, labels=False)
+        # Count가 1보다 큰 경우만 binning, 최소 2개 이상의 고유한 값이 필요
+        unique_counts = sgg_counts['count'].unique()
+        if len(unique_counts) > 1:  # 최소 2개 이상의 고유한 값이 있는지 확인
+            count_bins = pd.qcut(sgg_counts['count'], 7, labels=False)
+        else:
+            count_bins = [0] * len(sgg_counts)  # 모두 동일한 bin으로 변환
 
         # GeoJSON 레이어 추가
         folium.GeoJson(
             geojson_data,
             name='자치구',
             style_function=lambda feature: {
-                'fillColor': 'gray',  # 기본 색상
+                'fillColor': 'white',  # 기본 색상
                 'color': 'white',
                 'weight': 1.4,
-                'fillOpacity': 0.4
+                'fillOpacity': 0.1
             }
-        ).add_to(map)
-        
+        ).add_to(m)
+
         # Choropleth 추가
         folium.Choropleth(
             geo_data=geojson_data,
             data=sgg_counts,
             columns=['sgg', 'count'],
             key_on='feature.properties.sgg',
-            fill_color='Blues',
-            fill_opacity=0.7,
+            fill_color='Greens',
+            fill_opacity=0.5,
             line_opacity=0.2,
             bins=7,
             legend_name='Count of Buildings'
-        ).add_to(map)
+        ).add_to(m)
 
         # 시군구별 MarkerCluster 생성
         clusters = {}
@@ -154,7 +168,7 @@ if uploaded_file is not None:
                 # 클러스터가 생성되지 않았다면 추가
                 if sgg_code not in clusters:
                     clusters[sgg_code] = MarkerCluster(max_cluster_radius=75)
-                    clusters[sgg_code].add_to(map)
+                    clusters[sgg_code].add_to(m)
 
                 # Popup 내용 생성
                 image_name = row['사진 경로']
@@ -181,7 +195,7 @@ if uploaded_file is not None:
 
         # HTML 파일을 메모리에서 바이너리로 저장
         html_data = BytesIO()
-        map.save(html_data, close_file=False)
+        m.save(html_data, close_file=False)
 
         # HTML 데이터를 Streamlit에 표시
         st.components.v1.html(html_data.getvalue().decode('utf-8'), height=500)
